@@ -6,10 +6,11 @@ import shutil
 import pymupdf
 import faiss
 import numpy as np
+import onnxruntime as ort
 
+from transformers import AutoTokenizer
 from dotenv import load_dotenv
 from openai import OpenAI
-from sentence_transformers import SentenceTransformer, CrossEncoder
 from rank_bm25 import BM25Okapi
 from database import get_document
 from storage import download_pdf
@@ -35,33 +36,122 @@ client = OpenAI(
 )
 
 
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+EMBEDDING_MODEL_DIR = os.path.join(
+    os.path.dirname(__file__),
+    "onnx_models",
+    "embedding"
+)
 
-embed_model = None
-reranker = None
+RERANKER_MODEL_DIR = os.path.join(
+    os.path.dirname(__file__),
+    "onnx_models",
+    "reranker"
+)
+
+embedding_tokenizer = None
+embedding_session = None
+
+reranker_tokenizer = None
+reranker_session = None
 
 
 def get_embedding_model():
-    global embed_model
+    global embedding_tokenizer
+    global embedding_session
 
-    if embed_model is None:
-        print("Loading embedding model...", flush=True)
-        embed_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-        print("Embedding model loaded.", flush=True)
+    if embedding_session is None:
 
-    return embed_model
+        print(
+            "Loading ONNX embedding model...",
+            flush=True
+        )
+
+        embedding_tokenizer = AutoTokenizer.from_pretrained(
+            EMBEDDING_MODEL_DIR
+        )
+
+        embedding_session = ort.InferenceSession(
+            os.path.join(
+                EMBEDDING_MODEL_DIR,
+                "model.onnx"
+            ),
+            providers=["CPUExecutionProvider"]
+        )
+
+        print(
+            "ONNX embedding model loaded.",
+            flush=True
+        )
+
+    return embedding_tokenizer, embedding_session
 
 
 def get_reranker():
-    global reranker
+    global reranker_tokenizer
+    global reranker_session
 
-    if reranker is None:
-        print("Loading reranker model...", flush=True)
-        reranker = CrossEncoder(RERANKER_MODEL_NAME)
-        print("Reranker model loaded.", flush=True)
+    if reranker_session is None:
 
-    return reranker
+        print(
+            "Loading ONNX reranker model...",
+            flush=True
+        )
+
+        reranker_tokenizer = AutoTokenizer.from_pretrained(
+            RERANKER_MODEL_DIR
+        )
+
+        reranker_session = ort.InferenceSession(
+            os.path.join(
+                RERANKER_MODEL_DIR,
+                "model.onnx"
+            ),
+            providers=["CPUExecutionProvider"]
+        )
+
+        print(
+            "ONNX reranker model loaded.",
+            flush=True
+        )
+
+    return reranker_tokenizer, reranker_session
+
+def encode_embeddings(texts):
+    tokenizer, session = get_embedding_model()
+
+    encoded = tokenizer(
+        texts,
+        padding=True,
+        truncation=True,
+        return_tensors="np"
+    )
+
+    inputs = {}
+
+    for input_name in session.get_inputs():
+        name = input_name.name
+
+        if name in encoded:
+            inputs[name] = encoded[name]
+
+    outputs = session.run(None, inputs)
+
+    # Find the pooled embedding output: (batch_size, 384)
+    embeddings = None
+
+    for output in outputs:
+        if len(output.shape) == 2 and output.shape[1] == 384:
+            embeddings = output
+            break
+
+    if embeddings is None:
+        raise RuntimeError("Could not find 384-dimensional embedding output.")
+
+    # Match SentenceTransformer normalized embeddings
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    embeddings = embeddings / (norms + 1e-12)
+
+    return embeddings.astype("float32")
 
 
 rag_sessions = {}
@@ -70,9 +160,9 @@ query_cache = {}
 
 
 CURRENT_RAG_CONFIG = {
-    "embedding_model": EMBEDDING_MODEL_NAME,
+    "embedding_model": "all-MiniLM-L6-v2-onnx",
     "chunking_version": "v2",
-    "index_version": 1,
+    "index_version": 2,
 }
 
 RAG_STORAGE_ROOT = os.getenv("RAG_STORAGE_ROOT", "rag_storage")
@@ -414,13 +504,7 @@ def build_rag_from_pdf(pdf_path):
 
     bm25 = BM25Okapi(tokenized_docs)
 
-
-    embedding_model = get_embedding_model()
-
-    embeddings = embedding_model.encode(
-        documents,
-        show_progress_bar=False
-    )
+    embeddings = encode_embeddings(documents)
 
     embeddings = np.asarray(
         embeddings,
@@ -765,22 +849,48 @@ def rerank(
     docs,
     top_k=5
 ):
-
     if not docs:
         return []
 
-    reranker_model = get_reranker()
+    tokenizer, session = get_reranker()
 
-    pairs = [
-        (query, doc["content"])
-        for doc in docs
-    ]
+    queries = [query] * len(docs)
+    documents = [doc["content"] for doc in docs]
 
-    scores = reranker_model.predict(pairs)
+    encoded = tokenizer(
+        queries,
+        documents,
+        padding=True,
+        truncation=True,
+        return_tensors="np"
+    )
+
+    inputs = {}
+
+    for input_name in session.get_inputs():
+        name = input_name.name
+
+        if name in encoded:
+            inputs[name] = encoded[name]
+
+    outputs = session.run(None, inputs)
+
+    # Reranker output should be (number_of_documents, 1)
+    scores = None
+
+    for output in outputs:
+        if len(output.shape) == 2 and output.shape[0] == len(docs):
+            scores = output.reshape(-1)
+            break
+
+    if scores is None:
+        raise RuntimeError(
+            "Could not find reranker score output."
+        )
 
     ranked = sorted(
         zip(docs, scores),
-        key=lambda x: x[1],
+        key=lambda x: float(x[1]),
         reverse=True
     )
 
@@ -857,18 +967,7 @@ def query_uploaded_pdf(
 
     print(f"EXACT MATCH COUNT: {len(exact_article_docs) + len(exact_section_docs)}")
 
-
-    embedding_model = get_embedding_model()
-
-    q_emb = embedding_model.encode(
-        [user_query],
-        show_progress_bar=False
-    )
-
-    q_emb = np.asarray(
-        q_emb,
-        dtype="float32"
-    )
+    q_emb = encode_embeddings([user_query])
 
     faiss_k = min(15, len(documents))
 
