@@ -14,7 +14,6 @@ from rank_bm25 import BM25Okapi
 from database import get_document
 from storage import download_pdf
 
-
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -39,8 +38,30 @@ client = OpenAI(
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-embed_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-reranker = CrossEncoder(RERANKER_MODEL_NAME)
+embed_model = None
+reranker = None
+
+
+def get_embedding_model():
+    global embed_model
+
+    if embed_model is None:
+        print("Loading embedding model...", flush=True)
+        embed_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        print("Embedding model loaded.", flush=True)
+
+    return embed_model
+
+
+def get_reranker():
+    global reranker
+
+    if reranker is None:
+        print("Loading reranker model...", flush=True)
+        reranker = CrossEncoder(RERANKER_MODEL_NAME)
+        print("Reranker model loaded.", flush=True)
+
+    return reranker
 
 
 rag_sessions = {}
@@ -394,7 +415,9 @@ def build_rag_from_pdf(pdf_path):
     bm25 = BM25Okapi(tokenized_docs)
 
 
-    embeddings = embed_model.encode(
+    embedding_model = get_embedding_model()
+
+    embeddings = embedding_model.encode(
         documents,
         show_progress_bar=False
     )
@@ -746,12 +769,14 @@ def rerank(
     if not docs:
         return []
 
+    reranker_model = get_reranker()
+
     pairs = [
         (query, doc["content"])
         for doc in docs
     ]
 
-    scores = reranker.predict(pairs)
+    scores = reranker_model.predict(pairs)
 
     ranked = sorted(
         zip(docs, scores),
@@ -833,7 +858,9 @@ def query_uploaded_pdf(
     print(f"EXACT MATCH COUNT: {len(exact_article_docs) + len(exact_section_docs)}")
 
 
-    q_emb = embed_model.encode(
+    embedding_model = get_embedding_model()
+
+    q_emb = embedding_model.encode(
         [user_query],
         show_progress_bar=False
     )
