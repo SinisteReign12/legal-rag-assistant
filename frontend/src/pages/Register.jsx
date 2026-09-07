@@ -1,5 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
+import api from "../services/api";
 
 function Register({ onRegistered, onLoginClick }) {
     const [email, setEmail] = useState("");
@@ -24,8 +25,8 @@ function Register({ onRegistered, onLoginClick }) {
         try {
             setLoading(true);
 
-            const response = await axios.post(
-                "http://127.0.0.1:8000/register",
+            const response = await api.post(
+                "/register",
                 {
                     email: email,
                     password: password,
