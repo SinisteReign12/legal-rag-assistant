@@ -875,49 +875,58 @@ def get_exact_section_docs(
 def rerank(
     query,
     docs,
-    top_k=5
+    top_k=5,
+    batch_size=4
 ):
     if not docs:
         return []
 
     tokenizer, session = get_reranker()
 
-    queries = [query] * len(docs)
-    documents = [doc["content"] for doc in docs]
+    all_results = []
 
-    encoded = tokenizer(
-        queries,
-        documents,
-        padding=True,
-        truncation=True,
-        return_tensors="np"
-    )
+    for i in range(0, len(docs), batch_size):
+        batch_docs = docs[i:i + batch_size]
 
-    inputs = {}
+        queries = [query] * len(batch_docs)
+        documents = [doc["content"] for doc in batch_docs]
 
-    for input_name in session.get_inputs():
-        name = input_name.name
+        encoded = tokenizer(
+            queries,
+            documents,
+            padding=True,
+            truncation=True,
+            return_tensors="np"
+        )
 
-        if name in encoded:
-            inputs[name] = encoded[name]
+        inputs = {}
 
-    outputs = session.run(None, inputs)
+        for input_name in session.get_inputs():
+            name = input_name.name
 
-    # Reranker output should be (number_of_documents, 1)
-    scores = None
+            if name in encoded:
+                inputs[name] = encoded[name]
 
-    for output in outputs:
-        if len(output.shape) == 2 and output.shape[0] == len(docs):
-            scores = output.reshape(-1)
-            break
+        outputs = session.run(None, inputs)
 
-    if scores is None:
-        raise RuntimeError(
-            "Could not find reranker score output."
+        scores = None
+
+        for output in outputs:
+            if len(output.shape) == 2 and output.shape[0] == len(batch_docs):
+                scores = output.reshape(-1)
+                break
+
+        if scores is None:
+            raise RuntimeError(
+                "Could not find reranker score output."
+            )
+
+        all_results.extend(
+            zip(batch_docs, scores)
         )
 
     ranked = sorted(
-        zip(docs, scores),
+        all_results,
         key=lambda x: float(x[1]),
         reverse=True
     )
