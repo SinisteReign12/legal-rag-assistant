@@ -116,42 +116,61 @@ def get_reranker():
 
     return reranker_tokenizer, reranker_session
 
-def encode_embeddings(texts):
+def encode_embeddings(texts, batch_size=16):
     tokenizer, session = get_embedding_model()
 
-    encoded = tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        return_tensors="np"
-    )
+    all_embeddings = []
 
-    inputs = {}
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
 
-    for input_name in session.get_inputs():
-        name = input_name.name
+        encoded = tokenizer(
+            batch,
+            padding=True,
+            truncation=True,
+            return_tensors="np"
+        )
 
-        if name in encoded:
-            inputs[name] = encoded[name]
+        inputs = {}
 
-    outputs = session.run(None, inputs)
+        for input_name in session.get_inputs():
+            name = input_name.name
 
-    # Find the pooled embedding output: (batch_size, 384)
-    embeddings = None
+            if name in encoded:
+                inputs[name] = encoded[name]
 
-    for output in outputs:
-        if len(output.shape) == 2 and output.shape[1] == 384:
-            embeddings = output
-            break
+        outputs = session.run(None, inputs)
 
-    if embeddings is None:
-        raise RuntimeError("Could not find 384-dimensional embedding output.")
+        embeddings = None
 
-    # Match SentenceTransformer normalized embeddings
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    embeddings = embeddings / (norms + 1e-12)
+        for output in outputs:
+            if len(output.shape) == 2 and output.shape[1] == 384:
+                embeddings = output
+                break
 
-    return embeddings.astype("float32")
+        if embeddings is None:
+            raise RuntimeError(
+                "Could not find 384-dimensional embedding output."
+            )
+
+        norms = np.linalg.norm(
+            embeddings,
+            axis=1,
+            keepdims=True
+        )
+
+        embeddings = embeddings / (norms + 1e-12)
+
+        all_embeddings.append(
+            embeddings.astype("float32")
+        )
+
+        print(
+            f"Embedded {min(i + batch_size, len(texts))}/{len(texts)} chunks",
+            flush=True
+        )
+
+    return np.vstack(all_embeddings)
 
 
 rag_sessions = {}
