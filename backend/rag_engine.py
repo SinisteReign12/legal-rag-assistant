@@ -125,7 +125,7 @@ def get_reranker():
 
     return reranker_tokenizer, reranker_session
 
-def encode_embeddings(texts, batch_size=16):
+def encode_embeddings(texts, batch_size=4):
     tokenizer, session = get_embedding_model()
 
     all_embeddings = []
