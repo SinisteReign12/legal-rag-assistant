@@ -833,7 +833,6 @@ def get_exact_article_docs(
     return results
 
 
-
 def get_exact_section_docs(
     documents,
     metadata,
@@ -882,7 +881,7 @@ def rerank(
         return []
 
     tokenizer, session = get_reranker()
-
+    print(f"Starting reranking of {len(docs)} documents...", flush=True)
     all_results = []
 
     for i in range(0, len(docs), batch_size):
