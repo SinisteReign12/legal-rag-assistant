@@ -46,7 +46,7 @@ EMBEDDING_MODEL_DIR = os.path.join(
 RERANKER_MODEL_DIR = os.path.join(
     os.path.dirname(__file__),
     "onnx_models",
-    "reranker"
+    "reranker_tinybert"
 )
 
 embedding_tokenizer = None
