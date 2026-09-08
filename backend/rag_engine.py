@@ -7,6 +7,7 @@ import pymupdf
 import faiss
 import numpy as np
 import onnxruntime as ort
+import gc
 
 from transformers import AutoTokenizer
 from dotenv import load_dotenv
@@ -84,6 +85,14 @@ def get_embedding_model():
         )
 
     return embedding_tokenizer, embedding_session
+
+def release_embedding_model():
+    global embedding_tokenizer, embedding_session
+
+    embedding_tokenizer = None
+    embedding_session = None
+
+    gc.collect()
 
 
 def get_reranker():
@@ -934,8 +943,6 @@ def query_uploaded_pdf(
         print("QUERY CACHE HIT — skipping FAISS/BM25/rerank/Groq")
         return cached_answer
 
-
-
     rag_data = restore_rag_session(conversation_id)
 
     if not rag_data:
@@ -987,6 +994,8 @@ def query_uploaded_pdf(
     print(f"EXACT MATCH COUNT: {len(exact_article_docs) + len(exact_section_docs)}")
 
     q_emb = encode_embeddings([user_query])
+    
+    release_embedding_model()
 
     faiss_k = min(15, len(documents))
 
