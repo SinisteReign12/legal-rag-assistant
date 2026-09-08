@@ -127,7 +127,7 @@ def get_reranker():
 
 def encode_embeddings(texts, batch_size=4):
     tokenizer, session = get_embedding_model()
-
+    print(f"Starting embedding of {len(texts)} chunks...", flush=True)
     all_embeddings = []
 
     for i in range(0, len(texts), batch_size):
