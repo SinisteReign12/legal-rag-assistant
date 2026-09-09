@@ -6,6 +6,7 @@ import shutil
 import pymupdf
 import faiss
 import numpy as np
+# pyrefly: ignore [missing-import]
 import onnxruntime as ort
 import gc
 
@@ -625,6 +626,21 @@ def load_rag_from_disk(conversation_id):
     """
 
     paths = _storage_paths(conversation_id)
+
+    print(
+        f"[RAG PERSIST] Checking disk storage for {conversation_id}",
+        flush=True
+    )
+
+    print(
+        f"[RAG PERSIST] Index exists: {os.path.exists(paths['index'])}",
+        flush=True
+    )
+
+    print(
+        f"[RAG PERSIST] Metadata exists: {os.path.exists(paths['metadata'])}",
+        flush=True
+    )
 
     if not (os.path.exists(paths["index"]) and os.path.exists(paths["metadata"])):
         return None
